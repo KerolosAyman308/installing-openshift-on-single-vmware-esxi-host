@@ -1,23 +1,23 @@
 apiVersion: v1
-baseDomain: i8c-lab-02.iconos.be 
+baseDomain: koko
 compute:
-- hyperthreading: Enabled   
-  name: worker
-  replicas: 0 
+  - hyperthreading: Enabled
+    name: worker
+    replicas: 0
 controlPlane:
-  hyperthreading: Enabled   
-  name: master 
-  replicas: 3 
+  hyperthreading: Enabled
+  name: master
+  replicas: 3
 metadata:
-  name: ocp67
+  name: ocp
 networking:
   clusterNetwork:
-  - cidr: 10.128.0.0/14 
-    hostPrefix: 23 
+    - cidr: 10.128.0.0/14
+      hostPrefix: 23
   networkType: OpenShiftSDN
-  serviceNetwork: 
-  - 172.30.0.0/16
+  serviceNetwork:
+    - 172.30.0.0/16
 platform:
-  none: {} 
-pullSecret: '{"auths":{"cloud.openshift.com":{"auth":...' 
-sshKey: 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQA...' 
+  none: {}
+pullSecret: ${{ PULL_SECRETS }}
+sshKey: ${{ SSH_KEY }}

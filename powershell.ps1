@@ -1,47 +1,75 @@
-# AI written i didnt try it yet
-# Define the array of vSphere folder names
-$folderNames = @("Folder_A", "Folder_B", "Folder_C")
+# Path to the VMware Workstation disk manager tool
+$vdiskManager = "E:\programs\vmware\miain\vmware-vdiskmanager.exe"
 
-foreach ($folderName in $folderNames) {
-    Write-Host "Scanning folder: $folderName" -ForegroundColor Cyan
+# The size of the NEW blank disks you want to create
+$diskSizeGB = 120 
+
+# Your local VM folders
+$vmFolders = @(
+    "D:\vms\master-0.ocp.koko", 
+    "D:\vms\master-1.ocp.koko", 
+    "D:\vms\master-2.ocp.koko", 
+    "D:\vms\cptnod-0.ocp.koko",
+    "D:\vms\bootstrap"
+)
+
+# 1. Verify the VMware tool exists
+if (-not (Test-Path $vdiskManager)) {
+    Write-Host "[!] Cannot find vmware-vdiskmanager.exe. Please check the path." -ForegroundColor Red
+    exit
+}
+
+$indexfolder = 0
+foreach ($folder in $vmFolders) {
+    Write-Host "Scanning folder: $folder" -ForegroundColor Cyan
+
+    if (-not (Test-Path $folder)) {
+        Write-Host "  [!] Skipping: Folder does not exist." -ForegroundColor Yellow
+        continue
+    }
+
+    $vmName = Split-Path $folder -Leaf
     
-    # Get all VMs within the current folder
-    $vms = Get-Folder -Name $folderName | Get-VM
+    # Determine the disk name based on your clone logic
+    if ($indexfolder -eq 0) {
+        $diskFileName = "master-0.ocp.koko.vmdk"
+    } elseif($indexfolder + 1 -eq $vmFolders.Length){
+         $diskFileName = "master-0.ocp.koko-cl1.vmdk"
+    } else {
+        $diskFileName = "master-0.ocp.koko-cl$indexfolder.vmdk"
+    }
     
-    foreach ($vm in $vms) {
-        Write-Host "Processing VM: $($vm.Name)"
-        
-        # Ensure the VM is powered off to safely modify disks
-        if ($vm.PowerState -ne "PoweredOff") {
-            Write-Host "  [!] Skipping $($vm.Name): VM is powered on. Please shut it down first." -ForegroundColor Yellow
-            continue
-        }
+    $mainVmdkPath = Join-Path $folder $diskFileName
+    $indexfolder++
 
-        # Get the hard disks attached to the VM
-        $disks = Get-HardDisk -VM $vm
+    if (Test-Path $mainVmdkPath) {
+        Write-Host "  -> Found disk: $mainVmdkPath"
         
-        # Verify the VM only has exactly 1 disk as per your requirement
-        if ($disks.Count -eq 1) {
-            $targetDisk = $disks[0]
-            
-            # Save the existing disk's properties so we can recreate it identically
-            $diskCapacityGB = $targetDisk.CapacityGB
-            $diskDatastore = $targetDisk.Datastore
-            $diskFormat = $targetDisk.StorageFormat
+        # 2. DELETE the existing disk files
+        # FIX: We now delete ALL .vmdk files in this specific folder so there are no conflicts.
+        # Your previous logic ($vmName*.vmdk) missed the cloned files.
+        Write-Host "  -> Deleting old disk files..." -ForegroundColor Red
+        Get-ChildItem -Path $folder -Filter "*.vmdk" | Remove-Item -Force
 
-            Write-Host "  -> Found Disk: $($targetDisk.Name) | Size: ${diskCapacityGB}GB | Datastore: $diskDatastore"
-            
-            # 1. DELETE THE DISK (DeletePermanently removes the VMDK from the datastore)
-            Write-Host "  -> Deleting disk..." -ForegroundColor Red
-            Remove-HardDisk -HardDisk $targetDisk -DeletePermanently -Confirm:$false
-            
-            # 2. CREATE THE NEW DISK
-            Write-Host "  -> Creating and attaching new disk..." -ForegroundColor Green
-            New-HardDisk -VM $vm -CapacityGB $diskCapacityGB -Datastore $diskDatastore -StorageFormat $diskFormat -Confirm:$false | Out-Null
-            
-            Write-Host "  [+] Success for $($vm.Name)" -ForegroundColor Green
+        # 3. CREATE the new disk
+        Write-Host "  -> Creating new ${diskSizeGB}GB Thin (Growable) disk..." -ForegroundColor Green
+        
+        # Arguments for vdiskmanager: 
+        # -c (create)
+        # -s (size)
+        # -a lsilogic (adapter type)
+        # -t 0 (single growable virtual disk -> THIS IS VMWARE WORKSTATION'S "THIN" PROVISIONING)
+        $arguments = "-c -s ${diskSizeGB}GB -a lsilogic -t 0 `"$mainVmdkPath`""
+        
+        $process = Start-Process -FilePath $vdiskManager -ArgumentList $arguments -Wait -NoNewWindow -PassThru
+        
+        if ($process.ExitCode -eq 0) {
+            Write-Host "  [+] Success for $vmName" -ForegroundColor Green
         } else {
-            Write-Host "  [!] Skipping $($vm.Name): Found $($disks.Count) disks, expected exactly 1." -ForegroundColor Yellow
+            Write-Host "  [!] Failed to create disk for $vmName" -ForegroundColor Red
         }
+
+    } else {
+        Write-Host "  [!] Could not find primary disk named $diskFileName in $folder." -ForegroundColor Yellow
     }
 }
